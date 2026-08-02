@@ -1,0 +1,1336 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Perch</title>
+<!-- Inline SVG favicon (a green "up" pulse dot): keeps the tab recognisable
+     without a second HTTP request or any file outside the binary — the
+     browser otherwise asks for /favicon.ico on every load and gets a 404. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%230d0d0d'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%230ca30c'/%3E%3Ccircle cx='16' cy='16' r='11' fill='none' stroke='%230ca30c' stroke-opacity='.45' stroke-width='2'/%3E%3C/svg%3E">
+<style>
+:root{
+  --page:#0d0d0d; --surface:#1a1a19; --surface-2:#222220;
+  --ink:#ffffff; --ink-2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --border:rgba(255,255,255,0.10);
+  --good:#0ca30c; --warn:#fab219; --serious:#ec835a; --crit:#d03b3b;
+  --accent:#3987e5; --accent-track:#16334f;
+  --warn-track:#4b3708; --crit-track:#411616;
+  color-scheme: dark;
+}
+:root[data-theme="light"]{
+  --page:#f9f9f7; --surface:#fcfcfb; --surface-2:#f0efec;
+  --ink:#0b0b0b; --ink-2:#52514e; --muted:#898781;
+  --grid:#e1e0d9; --border:rgba(11,11,11,0.10);
+  --good:#0ca30c; --warn:#c98500; --serious:#c65f36; --crit:#d03b3b;
+  --accent:#2a78d6; --accent-track:#cde2fb;
+  --warn-track:#f6e3b8; --crit-track:#f4d4d4;
+  color-scheme: light;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--page);color:var(--ink);
+  font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;padding:20px}
+/* 1160px so two 550px-min log cards + 10px gap (=1110px) fit side by side */
+.wrap{max-width:1160px;margin:0 auto}
+header{display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap}
+header h1{font-size:20px;font-weight:600}
+header .sub{color:var(--muted);font-size:13px}
+header .right{margin-left:auto;display:flex;align-items:center;gap:10px;
+  color:var(--muted);font-size:12px}
+h2{font-size:13px;font-weight:600;color:var(--ink-2);text-transform:uppercase;
+  letter-spacing:.06em;margin:22px 0 10px;display:flex;align-items:center;gap:10px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px}
+button,select,input,textarea{
+  background:var(--surface-2);color:var(--ink);border:1px solid var(--border);
+  border-radius:8px;padding:8px 10px;font:inherit}
+button{cursor:pointer}
+button.primary{background:var(--accent);color:#fff;border-color:transparent;font-weight:600}
+button.primary:hover{filter:brightness(1.1)}
+button.ghost{background:transparent;padding:6px 9px}
+button.ghost:hover{background:var(--surface-2)}
+
+/* tabs: the top-level navigation between the four sections */
+.tabs{display:flex;gap:2px;margin-bottom:8px;border-bottom:1px solid var(--border);
+  flex-wrap:wrap}
+.tab{background:transparent;border:0;border-bottom:2px solid transparent;border-radius:0;
+  padding:9px 15px;color:var(--muted);font-weight:600;font-size:13px;
+  margin-bottom:-1px}
+.tab:hover{color:var(--ink-2);background:transparent}
+.tab.active{color:var(--ink);border-bottom-color:var(--accent)}
+/* only the active panel is shown; the rest stay in the DOM (still polled) */
+.tabpanel{display:none}
+.tabpanel.active{display:block}
+
+/* stat tiles */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.tile .label{font-size:12px;color:var(--muted);margin-bottom:4px}
+.tile .value{font-size:26px;font-weight:600}
+.tile .value small{font-size:13px;font-weight:400;color:var(--ink-2)}
+.tile .detail{font-size:12px;color:var(--ink-2);margin-top:2px}
+
+/* meter */
+.meter{height:6px;border-radius:4px;background:var(--accent-track);margin-top:8px;overflow:hidden}
+.meter i{display:block;height:100%;border-radius:4px;background:var(--accent);
+  transition:width .6s ease}
+.meter.warn{background:var(--warn-track)}.meter.warn i{background:var(--warn)}
+.meter.crit{background:var(--crit-track)}.meter.crit i{background:var(--crit)}
+
+/* disks */
+.disk{display:grid;grid-template-columns:minmax(120px,1.2fr) 70px 2fr 150px;
+  gap:12px;align-items:center;padding:8px 0;border-bottom:1px solid var(--grid)}
+.disk:last-child{border-bottom:0}
+.disk .mount{font-weight:600;overflow-wrap:anywhere}
+.disk .fs{color:var(--muted);font-size:12px}
+.disk .nums{color:var(--ink-2);font-size:13px;text-align:right;
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* table */
+table{width:100%;border-collapse:collapse}
+th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);
+  text-align:left;padding:6px 10px;border-bottom:1px solid var(--grid);font-weight:600}
+td{padding:8px 10px;border-bottom:1px solid var(--grid);vertical-align:middle}
+tr:last-child td{border-bottom:0}
+td.num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+th.num{text-align:right}
+.name{font-weight:600}
+.img,.ports{color:var(--ink-2);font-size:12.5px;overflow-wrap:anywhere}
+.empty{color:var(--muted);padding:14px 10px}
+
+/* status badge: colored dot + neutral text, never color-alone or colored text */
+.badge{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;
+  white-space:nowrap;color:var(--ink-2)}
+.dot{width:8px;height:8px;border-radius:50%;flex:none}
+.s-good .dot{background:var(--good)}
+.s-warn .dot{background:var(--warn)}
+.s-crit .dot{background:var(--crit)}
+.s-mut  .dot{background:var(--muted)}
+
+/* log cards */
+.logbar{display:flex;gap:8px;align-items:center;font-weight:400;
+  text-transform:none;letter-spacing:0}
+/* flexbox (not grid) so that a card the user drags WIDER pushes the following
+   cards onto the next row — the requested "widen → own row" reflow. */
+.logcards{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start}
+/* resize:both puts a drag handle on the bottom-right corner so width AND height
+   are adjustable by mouse; sizes are persisted per card (see JS). */
+.logcard{flex:0 0 auto;width:550px;max-width:100%;height:460px;
+  min-width:300px;min-height:200px;resize:both;
+  display:flex;flex-direction:column;padding:0;overflow:hidden}
+@media (max-width:640px){.logcard{width:100%}}
+.logcard .head{display:flex;align-items:center;gap:8px;padding:10px 12px;
+  border-bottom:1px solid var(--grid)}
+.logcard .title{font-weight:600;font-size:13px;overflow-wrap:anywhere}
+.logcard .age{color:var(--muted);font-size:11px;margin-left:auto;white-space:nowrap}
+.logcard .close{background:transparent;border:0;color:var(--muted);font-size:16px;
+  padding:0 2px;line-height:1;cursor:pointer}
+.logcard .close:hover{color:var(--crit)}
+.logcard .copy,.logcard .refresh{background:transparent;border:0;color:var(--muted);
+  font-size:14px;padding:0 4px;line-height:1;cursor:pointer}
+.logcard .copy:hover,.logcard .refresh:hover{color:var(--ink)}
+.logcard .copy.done{color:var(--good)}
+/* the refresh glyph spins briefly while a manual fetch is in flight */
+.logcard .refresh.spin{animation:spin .6s linear}
+@keyframes spin{to{transform:rotate(360deg)}}
+.logbox{flex:1;overflow:auto;padding:10px 12px;margin:0;border:0;background:transparent;
+  font:11.5px/1.5 ui-monospace,Consolas,monospace;color:var(--ink-2);
+  white-space:pre-wrap;overflow-wrap:anywhere}
+
+/* api caller */
+.api-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.api-row select{max-width:280px}
+.api-row .path{flex:1;min-width:200px;font-family:ui-monospace,Consolas,monospace}
+textarea{width:100%;min-height:64px;resize:vertical;
+  font:12.5px/1.5 ui-monospace,Consolas,monospace}
+.api-extra{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}
+.api-extra label{font-size:11px;color:var(--muted);display:block;margin-bottom:4px;
+  text-transform:uppercase;letter-spacing:.05em}
+#api-out{margin-top:12px;display:none}
+#api-meta{font-size:13px;margin-bottom:8px;color:var(--ink-2);
+  display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+pre.resp{background:var(--page);border:1px solid var(--grid);border-radius:8px;
+  padding:10px;font:12px/1.5 ui-monospace,Consolas,monospace;color:var(--ink-2);
+  overflow:auto;max-height:300px;white-space:pre-wrap;overflow-wrap:anywhere}
+.banner{background:var(--crit-track);border:1px solid var(--crit);border-radius:8px;
+  padding:10px 12px;margin-bottom:14px;display:none;font-size:13px}
+
+/* banned ips */
+.banrow{display:flex;gap:16px;align-items:center;flex-wrap:wrap;
+  padding:8px 0;border-bottom:1px solid var(--grid)}
+.banrow:last-child{border-bottom:0}
+.banrow .ip{font-weight:600;font-family:ui-monospace,Consolas,monospace}
+.banrow .when{color:var(--muted);font-size:12.5px;font-variant-numeric:tabular-nums}
+.banrow button{margin-left:auto;padding:4px 10px;font-size:12.5px}
+
+/* login overlay */
+#login{position:fixed;inset:0;background:var(--page);display:none;
+  align-items:center;justify-content:center;z-index:10}
+#login .card{width:min(360px,90vw)}
+#login h1{font-size:18px;margin-bottom:4px}
+#login p{color:var(--muted);font-size:13px;margin-bottom:14px}
+#login form{display:flex;flex-direction:column;gap:10px}
+#login .err{color:var(--crit);font-size:13px;display:none}
+
+@media (max-width:640px){.disk{grid-template-columns:1fr 60px;grid-auto-rows:auto}
+  .disk .meterwrap{grid-column:1/-1}.api-extra{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div id="login">
+  <div class="card">
+    <h1>Perch</h1>
+    <p>This instance is protected.</p>
+    <a id="login-github" href="/api/auth/github/login"
+      style="display:none;text-align:center;text-decoration:none;margin-bottom:10px;
+      background:var(--accent);color:#fff;font-weight:600;padding:9px 10px;border-radius:8px">
+      Sign in with GitHub</a>
+    <div id="login-or" style="display:none;color:var(--muted);font-size:12px;
+      text-align:center;margin:2px 0 10px">or</div>
+    <form id="login-form">
+      <input type="password" id="login-key" placeholder="access key" autocomplete="current-password">
+      <div class="err" id="login-err"></div>
+      <button class="primary" type="submit">Log in</button>
+    </form>
+  </div>
+</div>
+
+<div class="wrap">
+  <header>
+    <h1>Perch</h1>
+    <span class="sub" id="host"></span>
+    <div class="right">
+      <span id="meta"></span>
+      <button class="ghost" id="theme-btn" title="toggle light/dark">◐</button>
+      <button class="ghost" id="logout-btn" style="display:none">log out</button>
+    </div>
+  </header>
+  <div class="banner" id="banner"></div>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-tab="containers" type="button">Containers</button>
+    <button class="tab" data-tab="logs" type="button">Logs</button>
+    <button class="tab" data-tab="api" type="button">API Calls</button>
+    <button class="tab" data-tab="inspect" type="button">Inspect</button>
+    <button class="tab" data-tab="usage" type="button">Usage</button>
+    <button class="tab" data-tab="disks" type="button">Disks</button>
+  </nav>
+
+  <!-- ===== Containers tab: machine + containers + health checks ===== -->
+  <section class="tabpanel active" data-panel="containers">
+    <h2>Machine</h2>
+    <section class="tiles" id="tiles"></section>
+    <div class="tiles" id="trends"
+      style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr));margin-top:10px"></div>
+
+    <h2>Containers</h2>
+    <div class="card" style="padding:4px 6px;overflow-x:auto" id="containers"></div>
+
+    <h2>Health checks
+      <span class="logbar">
+        <button class="primary" id="hc-add-toggle" type="button">+ add check</button>
+      </span>
+    </h2>
+    <div class="card" id="hc-form" style="display:none;margin-bottom:10px">
+      <div class="api-row">
+        <input id="hc-name" placeholder="name (optional)" style="max-width:180px">
+        <input class="path" id="hc-url"
+          placeholder="https://example.com/health   ·   http://container:8080/…" spellcheck="false">
+        <select id="hc-shortcut" style="max-width:200px"><option value="">container…</option></select>
+      </div>
+      <div class="api-row">
+        <input id="hc-interval" type="number" min="5" value="30" title="interval (seconds)" style="max-width:120px">
+        <input id="hc-expect" placeholder="expect status, e.g. 200,204 (optional)" style="max-width:260px">
+        <button class="primary" id="hc-add" type="button">Add check</button>
+        <span id="hc-err" style="color:var(--crit);font-size:12px;align-self:center"></span>
+      </div>
+    </div>
+    <div class="tiles" id="checks" style="grid-template-columns:repeat(auto-fill,minmax(240px,1fr))"></div>
+
+    <h2>Notifications</h2>
+    <div class="card" id="alerts">
+      <div id="alerts-status" style="color:var(--ink-2);font-size:13px;margin-bottom:8px"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input id="alerts-url" type="text" placeholder="paste a Discord, Slack, or Telegram webhook URL…"
+               style="flex:1;min-width:260px" autocomplete="off" spellcheck="false">
+        <button class="ghost" id="alerts-save" type="button">save</button>
+        <button class="ghost" id="alerts-test" type="button">send test</button>
+      </div>
+      <div style="color:var(--muted);font-size:11px;margin-top:6px;line-height:1.6">
+        <b>Discord/Slack:</b> paste the incoming-webhook URL as-is.
+        <b>Telegram:</b> <code>https://api.telegram.org/bot&lt;TOKEN&gt;/sendMessage?chat_id=&lt;CHAT_ID&gt;</code>
+        (token from <code>@BotFather</code>, chat id from <code>@userinfobot</code>).
+      </div>
+      <div id="alerts-msg" style="color:var(--ink-2);font-size:12px;margin-top:8px"></div>
+    </div>
+  </section>
+
+  <!-- ===== Logs tab: container logs + proxied-request log ===== -->
+  <section class="tabpanel" data-panel="logs">
+    <h2>Container logs
+      <span class="logbar">
+        <select id="log-select"></select>
+        <button class="primary" id="log-add" type="button">+ add card</button>
+      </span>
+    </h2>
+    <div class="logcards" id="logcards"></div>
+
+    <h2>Perch logs
+      <span class="logbar">
+        <button class="ghost" id="self-log-refresh" type="button">⟳ refresh</button>
+      </span>
+    </h2>
+    <div class="logcards">
+      <div class="card logcard" id="self-logcard" style="width:100%">
+        <div class="head">
+          <span class="title">Perch (self)</span>
+          <span class="age" id="self-log-age"></span>
+          <button class="copy" id="self-log-copy" title="copy log to clipboard">⧉</button>
+        </div>
+        <pre class="logbox" id="self-logbox">loading…</pre>
+      </div>
+    </div>
+
+    <h2>Requests to Perch
+      <span class="logbar">
+        <span style="color:var(--muted);font-size:12px;font-weight:400;
+          text-transform:none;letter-spacing:0">every request hitting this dashboard</span>
+        <select id="self-rq-limit" style="font-weight:400">
+          <option value="20">last 20</option>
+          <option value="50" selected>last 50</option>
+          <option value="100">last 100</option>
+        </select>
+      </span>
+    </h2>
+    <div class="card" style="padding:4px 6px;overflow-x:auto" id="self-requests"></div>
+
+    <h2>Requests (via nginx proxy manager)
+      <span class="logbar">
+        <select id="rq-domain"><option value="">all domains</option></select>
+        <select id="rq-method"><option value="">any method</option></select>
+        <select id="rq-status">
+          <option value="">any status</option>
+          <option value="2">2xx success</option>
+          <option value="3">3xx redirect</option>
+          <option value="4">4xx client error</option>
+          <option value="5">5xx server error</option>
+        </select>
+        <input class="path" id="rq-search" placeholder="filter path…" spellcheck="false"
+          style="min-width:140px;flex:0 1 220px">
+      </span>
+    </h2>
+    <div class="card" style="padding:4px 6px;overflow-x:auto" id="requests"></div>
+  </section>
+
+  <!-- ===== API Calls tab ===== -->
+  <section class="tabpanel" data-panel="api">
+    <h2>API calls</h2>
+    <div class="card">
+      <!-- Primary row: request type + method + a FULL url bar. Type ANY URL:
+           https://api.example.com/… , http://localhost:3000/… , or a container
+           such as http://my-api:8080/… -->
+      <div class="api-row">
+        <select id="a-proto" title="request type">
+          <option value="rest">REST</option>
+          <option value="graphql">GraphQL</option>
+          <option value="jsonrpc">JSON-RPC</option>
+        </select>
+        <select id="a-method"><option>GET</option><option>POST</option><option>PUT</option>
+          <option>PATCH</option><option>DELETE</option><option>HEAD</option><option>OPTIONS</option></select>
+        <input class="path" id="a-url"
+          placeholder="https://api.example.com/v1/…   ·   http://localhost:3000/…   ·   http://container:8080/…"
+          spellcheck="false">
+        <button class="primary" id="a-send" type="button">Send</button>
+      </div>
+      <!-- Convenience only: pick a running container to prefill the URL bar. -->
+      <div class="api-row" style="margin-top:0">
+        <label style="color:var(--muted);font-size:12px;align-self:center">quick fill</label>
+        <select id="a-shortcut" style="max-width:340px">
+          <option value="">running containers…</option>
+        </select>
+      </div>
+      <div class="api-extra">
+        <div><label>Headers (one per line, "Name: value")</label>
+          <textarea id="a-headers" placeholder="Authorization: Bearer mytoken"></textarea></div>
+        <div id="a-body-wrap" style="display:none"><label id="a-body-label">Body</label>
+          <textarea id="a-body" placeholder='{"hello":"world"}'></textarea></div>
+      </div>
+      <div id="api-out">
+        <div id="api-meta"></div>
+        <pre class="resp" id="api-body"></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Inspect tab: read-only container internals (no exec) ===== -->
+  <section class="tabpanel" data-panel="inspect">
+    <h2>Inspect
+      <span class="logbar">
+        <select id="ins-select"></select>
+        <button class="ghost" id="ins-refresh" type="button">⟳ refresh</button>
+      </span>
+    </h2>
+    <div id="inspect"><div class="empty">pick a container to inspect</div></div>
+  </section>
+
+  <!-- ===== Usage tab: API spend (OpenAI + Anthropic) ===== -->
+  <section class="tabpanel" data-panel="usage">
+    <h2>API usage
+      <span class="logbar">
+        <span id="usage-updated" style="color:var(--muted);font-size:12px;font-weight:400;
+          text-transform:none;letter-spacing:0"></span>
+        <button class="ghost" id="usage-refresh" type="button">⟳ refresh</button>
+      </span>
+    </h2>
+    <div class="tiles" id="usage" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr))"></div>
+  </section>
+
+  <!-- ===== Disks tab ===== -->
+  <section class="tabpanel" data-panel="disks">
+    <h2>Disks</h2>
+    <div class="card" id="disks"></div>
+  </section>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* ---------- theme ---------- */
+const root = document.documentElement;
+root.dataset.theme = localStorage.getItem('perch_theme') ||
+  (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+$('theme-btn').onclick = () => {
+  root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
+  localStorage.setItem('perch_theme', root.dataset.theme);
+};
+
+/* ---------- tabs ---------- */
+// Switch the visible section: the chosen tab button and its matching panel get
+// the `active` class, everything else loses it. Hidden panels stay in the DOM
+// and keep updating in the background, so switching tabs is instant. The choice
+// is remembered so a reload lands on the same tab.
+function showTab(name){
+  for (const t of document.querySelectorAll('.tab'))
+    t.classList.toggle('active', t.dataset.tab === name);
+  for (const p of document.querySelectorAll('.tabpanel'))
+    p.classList.toggle('active', p.dataset.panel === name);
+  localStorage.setItem('perch_tab', name);
+  // Inspect data is fetched on demand (it's a few Docker calls), so load it
+  // when the tab is opened.
+  if (name === 'inspect') fetchInspect();
+  if (name === 'usage') fetchUsage(false);
+}
+for (const tabButton of document.querySelectorAll('.tab'))
+  tabButton.onclick = () => showTab(tabButton.dataset.tab);
+// Restore the last-used tab (default: Containers).
+showTab(localStorage.getItem('perch_tab') || 'containers');
+
+/* ---------- formatting helpers ---------- */
+function fmtBytes(b){
+  if (!b && b !== 0) return '–';
+  const u = ['B','KB','MB','GB','TB']; let i = 0;
+  while (b >= 1024 && i < u.length-1){ b /= 1024; i++; }
+  return (b >= 10 || i === 0 ? Math.round(b) : b.toFixed(1)) + ' ' + u[i];
+}
+function fmtUptime(s){
+  const d = Math.floor(s/86400), h = Math.floor(s%86400/3600), m = Math.floor(s%3600/60);
+  return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+function meter(p){
+  const cls = p >= 90 ? 'crit' : p >= 75 ? 'warn' : '';
+  return `<div class="meter ${cls}"><i style="width:${Math.min(100,p).toFixed(1)}%"></i></div>`;
+}
+function tile(label, value, detail, pct){
+  return `<div class="card tile"><div class="label">${label}</div>
+    <div class="value">${value}</div>
+    ${detail ? `<div class="detail">${detail}</div>` : ''}
+    ${pct != null ? meter(pct) : ''}</div>`;
+}
+const badge = (cls, txt) => `<span class="badge ${cls}"><span class="dot"></span>${esc(txt)}</span>`;
+
+// copyText copies a string to the clipboard, with a fallback for non-secure
+// contexts / older browsers (used by every copy button).
+async function copyText(text){
+  try { await navigator.clipboard.writeText(text); }
+  catch {
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch {}
+    ta.remove();
+  }
+}
+// flashCopied briefly turns a copy button (⧉) into a checkmark for feedback.
+function flashCopied(btn){
+  btn.textContent = '✓'; btn.classList.add('done');
+  setTimeout(() => { btn.textContent = '⧉'; btn.classList.remove('done'); }, 1200);
+}
+
+/* ---------- shared state ---------- */
+let byName = {};   // container name -> {id, port, state}
+let loggedOut = false;
+
+/* ---------- main render ---------- */
+function render(o){
+  const m = o.machine || {};
+  $('host').textContent = m.hostname || '';
+  $('meta').textContent =
+    `up ${fmtUptime(m.uptime_sec || 0)} · refreshed ${new Date().toLocaleTimeString()}`;
+  $('logout-btn').style.display = o.auth_enabled ? '' : 'none';
+
+  const banner = $('banner');
+  banner.style.display = o.docker_error ? 'block' : 'none';
+  if (o.docker_error) banner.textContent = 'Docker API unreachable: ' + o.docker_error;
+
+  let t = '';
+  t += tile('CPU', `${(m.cpu_pct ?? 0).toFixed(1)}<small> %</small>`,
+    `${m.cpu_count || '?'} cores`, m.cpu_pct ?? 0);
+  t += tile('Memory', `${(m.mem_pct ?? 0).toFixed(1)}<small> %</small>`,
+    `${fmtBytes(m.mem_used)} of ${fmtBytes(m.mem_total)}`, m.mem_pct ?? 0);
+  for (const g of (o.gpus || [])){
+    const vp = g.mem_total_mb ? 100*g.mem_used_mb/g.mem_total_mb : 0;
+    t += tile('GPU', `${g.util_pct.toFixed(0)}<small> %</small>`,
+      `${esc(g.name)} · ${g.temp_c.toFixed(0)}°C · ${g.power_w.toFixed(0)} W`, g.util_pct);
+    t += tile('GPU memory', `${(g.mem_used_mb/1024).toFixed(1)}<small> GB</small>`,
+      `of ${(g.mem_total_mb/1024).toFixed(1)} GB VRAM`, vp);
+  }
+  if (!(o.gpus || []).length) t += tile('GPU', '<small>not detected</small>', '', null);
+  t += tile('Load average', (m.load1 ?? 0).toFixed(2),
+    `5m ${(m.load5 ?? 0).toFixed(2)} · 15m ${(m.load15 ?? 0).toFixed(2)}`, null);
+  if (m.swap_total > 0)
+    t += tile('Swap', `${(100*m.swap_used/m.swap_total).toFixed(1)}<small> %</small>`,
+      `${fmtBytes(m.swap_used)} of ${fmtBytes(m.swap_total)}`, 100*m.swap_used/m.swap_total);
+  $('tiles').innerHTML = t;
+
+  $('disks').innerHTML = (m.disks || []).map(d => `<div class="disk">
+      <div><div class="mount">${esc(d.mount)}</div><div class="fs">${esc(d.fstype)}</div></div>
+      <div class="nums">${d.used_pct.toFixed(0)}%</div>
+      <div class="meterwrap">${meter(d.used_pct)}</div>
+      <div class="nums">${fmtBytes(d.used)} / ${fmtBytes(d.total)}</div>
+    </div>`).join('') || '<div class="empty">no disks found</div>';
+
+  const stateBadge = c => {
+    if (c.state !== 'running') return badge('s-mut', c.state);
+    if (c.health === 'healthy')   return badge('s-good', 'running · healthy');
+    if (c.health === 'unhealthy') return badge('s-crit', 'running · unhealthy');
+    if (c.health === 'starting')  return badge('s-warn', 'running · starting');
+    return badge('s-good', 'running');
+  };
+  const rows = (o.containers || []).map(c => `<tr>
+      <td class="name">${esc(c.name)}</td>
+      <td>${stateBadge(c)}</td>
+      <td class="img">${esc(c.image)}</td>
+      <td class="num">${c.state === 'running' ? c.cpu_pct.toFixed(1) + ' %' : '–'}</td>
+      <td class="num">${c.state === 'running' ? fmtBytes(c.mem_used) : '–'}</td>
+      <td class="ports">${(c.ports || []).map(esc).join('<br>') || '–'}</td>
+      <td class="img">${esc(c.status)}</td>
+    </tr>`).join('');
+  $('containers').innerHTML = rows
+    ? `<table><thead><tr><th>Name</th><th>State</th><th>Image</th>
+        <th class="num">CPU</th><th class="num">Mem</th><th>Ports</th><th>Status</th>
+      </tr></thead><tbody>${rows}</tbody></table>`
+    : '<div class="empty">no containers</div>';
+
+  $('checks').innerHTML = (o.checks || []).map(c => `<div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <span style="font-weight:600;overflow-wrap:anywhere">${esc(c.name)}</span>
+        <span style="display:flex;align-items:center;gap:6px;flex:none">
+          ${c.last_checked ? (c.up ? badge('s-good','UP') : badge('s-crit','DOWN'))
+                           : badge('s-mut','PENDING')}
+          <button class="ghost" data-remove-check="${esc(c.id)}" title="remove check"
+            style="padding:0 5px;color:var(--muted);font-size:15px;line-height:1">×</button>
+        </span></div>
+      <div style="color:var(--muted);font-size:12px;overflow-wrap:anywhere;margin:4px 0 8px">${esc(c.url)}</div>
+      <div style="display:flex;gap:14px;color:var(--ink-2);font-size:12.5px;font-variant-numeric:tabular-nums">
+        <span>${c.latency_ms} ms</span>
+        <span>${c.status_code ? 'HTTP ' + c.status_code : ''}</span>
+        <span>${c.uptime_pct.toFixed(0)}% up</span>
+        <span>every ${c.interval}s</span></div>
+      ${c.error ? `<div style="color:var(--serious);font-size:12px;margin-top:6px;overflow-wrap:anywhere">${esc(c.error)}</div>` : ''}
+    </div>`).join('') ||
+    // Empty state: when the backend could not read/parse the config it says
+    // why (checks_error) — far more useful than "add some checks".
+    (o.checks_error
+      ? `<div class="card empty" style="color:var(--serious)">checks.yml problem: ${esc(o.checks_error)}</div>`
+      : '<div class="card empty">no checks configured — add some to checks.yml and restart</div>');
+
+  // container name -> id/port map for log cards + api caller
+  byName = {};
+  for (const c of (o.containers || [])){
+    const pub = (c.ports || []).map(p => (p.match(/^(\d+)→/) || [])[1]).find(Boolean);
+    byName[c.name] = {id: c.id, port: pub, state: c.state};
+  }
+  updateLogSelect();
+  updateCardTitles();
+  updateApiTargets(o.containers || []);
+  updateInspectSelect(o.containers || []);
+  renderAlerts(o.alerts_enabled);
+}
+
+/* ---------- overview polling ---------- */
+async function refresh(){
+  if (loggedOut) return;
+  try {
+    const r = await fetch('/api/overview');
+    if (r.status === 401){ showLogin(); return; }
+    render(await r.json());
+  } catch (e) {
+    $('meta').textContent = 'connection lost — retrying…';
+  }
+}
+
+/* ---------- login ---------- */
+async function showLogin(){
+  loggedOut = true;
+  $('login').style.display = 'flex';
+  // Ask the backend which sign-in methods exist and show only those: the
+  // GitHub button, the access-key form, or both (with an "or" divider).
+  try {
+    const info = await (await fetch('/api/auth/info')).json();
+    $('login-github').style.display = info.github ? 'block' : 'none';
+    $('login-form').style.display = info.key ? '' : 'none';
+    $('login-or').style.display = (info.github && info.key) ? 'block' : 'none';
+    if (info.key) $('login-key').focus();
+  } catch (e) {
+    // On any error, fall back to the access-key form.
+    $('login-form').style.display = '';
+    $('login-key').focus();
+  }
+}
+$('login-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const err = $('login-err');
+  err.style.display = 'none';
+  const r = await fetch('/api/login', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({key: $('login-key').value})
+  });
+  if (r.ok){
+    loggedOut = false;
+    $('login').style.display = 'none';
+    $('login-key').value = '';
+    refresh(); refreshAllLogs(); refreshRequests(); refreshSelfLog(); refreshSelfRequests();
+    fetchAlerts();
+  } else {
+    const p = await r.json().catch(() => ({}));
+    err.textContent = r.status === 429 ? (p.error || 'too many attempts')
+                                       : 'wrong key, try again';
+    err.style.display = 'block';
+  }
+});
+$('logout-btn').onclick = async () => {
+  await fetch('/api/logout', {method: 'POST'});
+  location.reload();
+};
+
+/* ---------- log cards ---------- */
+let logCards = JSON.parse(localStorage.getItem('perch_logcards') || '[]');
+const saveCards = () => localStorage.setItem('perch_logcards', JSON.stringify(logCards));
+
+function cardTitle(name){
+  const info = byName[name];
+  return info && info.port ? `${name}:${info.port}` : name;
+}
+function updateLogSelect(){
+  const sel = $('log-select');
+  const current = sel.value;
+  sel.innerHTML = Object.keys(byName).filter(n => !logCards.includes(n))
+    .map(n => `<option value="${esc(n)}">${esc(cardTitle(n))}</option>`).join('');
+  if ([...sel.options].some(op => op.value === current)) sel.value = current;
+}
+function updateCardTitles(){
+  for (const name of logCards){
+    const el = document.querySelector(`.logcard[data-name="${CSS.escape(name)}"] .title`);
+    if (el) el.textContent = cardTitle(name);
+  }
+}
+// Per-card dragged sizes, persisted so a card keeps its width/height across
+// reloads. Keyed by container name: { name: {w, h} }.
+const logSizes = JSON.parse(localStorage.getItem('perch_logsize') || '{}');
+function saveLogSize(name, w, h){
+  logSizes[name] = {w, h};
+  localStorage.setItem('perch_logsize', JSON.stringify(logSizes));
+}
+
+function syncCardDOM(){
+  const grid = $('logcards');
+  // remove cards no longer wanted
+  for (const el of [...grid.children])
+    if (!logCards.includes(el.dataset.name)) el.remove();
+  // add missing cards
+  for (const name of logCards){
+    if (grid.querySelector(`.logcard[data-name="${CSS.escape(name)}"]`)) continue;
+    const el = document.createElement('div');
+    el.className = 'card logcard';
+    el.dataset.name = name;
+    el.innerHTML = `<div class="head">
+        <span class="title">${esc(cardTitle(name))}</span>
+        <span class="age"></span>
+        <button class="refresh" title="refresh now">⟳</button>
+        <button class="copy" title="copy log to clipboard">⧉</button>
+        <button class="close" title="remove card">×</button></div>
+      <pre class="logbox">loading…</pre>`;
+
+    // Restore any size the user previously dragged this card to.
+    const saved = logSizes[name];
+    if (saved){ el.style.width = saved.w + 'px'; el.style.height = saved.h + 'px'; }
+    // Persist the size whenever the resize handle is dragged. A rAF gate keeps
+    // us from writing localStorage on every pixel of the drag.
+    let sizePending = false;
+    new ResizeObserver(() => {
+      if (sizePending) return;
+      sizePending = true;
+      requestAnimationFrame(() => {
+        sizePending = false;
+        saveLogSize(name, Math.round(el.offsetWidth), Math.round(el.offsetHeight));
+      });
+    }).observe(el);
+
+    // Remove this card.
+    el.querySelector('.close').onclick = () => {
+      logCards = logCards.filter(n => n !== name);
+      saveCards(); syncCardDOM(); updateLogSelect();
+    };
+    // Manual refresh: fetch this card's log immediately, spinning the glyph.
+    el.querySelector('.refresh').onclick = () => {
+      const btn = el.querySelector('.refresh');
+      btn.classList.add('spin');
+      setTimeout(() => btn.classList.remove('spin'), 600);
+      refreshLog(name);
+    };
+    // Copy the full log text (the whole fetched tail, not just what's scrolled
+    // into view) to the clipboard.
+    el.querySelector('.copy').onclick = async () => {
+      await copyText(el.querySelector('.logbox').textContent || '');
+      flashCopied(el.querySelector('.copy'));
+    };
+    grid.appendChild(el);
+  }
+}
+async function refreshLog(name){
+  const el = document.querySelector(`.logcard[data-name="${CSS.escape(name)}"]`);
+  if (!el) return;
+  const box = el.querySelector('.logbox'), age = el.querySelector('.age');
+  const info = byName[name];
+  if (!info){ box.textContent = 'container not found (stopped or removed?)'; return; }
+  try {
+    const r = await fetch(`/api/logs?id=${info.id}&tail=200`);
+    if (r.status === 401){ showLogin(); return; }
+    const p = await r.json();
+    const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+    box.textContent = p.error ? ('error: ' + p.error) : (p.text || '(no log output)');
+    if (atBottom) box.scrollTop = box.scrollHeight;
+    age.textContent = new Date().toLocaleTimeString();
+  } catch (e) { box.textContent = 'failed to fetch logs: ' + e; }
+}
+function refreshAllLogs(){ if (!loggedOut) logCards.forEach(refreshLog); }
+$('log-add').onclick = () => {
+  const name = $('log-select').value;
+  if (!name || logCards.includes(name)) return;
+  logCards.push(name);
+  saveCards(); syncCardDOM(); updateLogSelect();
+  refreshLog(name);
+};
+syncCardDOM();
+
+/* ---------- api caller ---------- */
+// URL-first: you type ANY full URL into #a-url. The container list is only a
+// convenience that prefills that bar.
+
+// updateApiTargets fills the "quick fill" dropdown with one full URL per
+// running container port. Picking one drops it into the URL bar, where you can
+// edit it freely (change the path, swap the host, anything).
+function updateApiTargets(containers){
+  const sel = $('a-shortcut');
+  const opts = [];
+  for (const c of containers){
+    if (c.state !== 'running') continue;            // only running containers answer
+    for (const p of (c.ports || [])){
+      // "8080→80/tcp": 8080 is reachable on the host, 80 inside the container.
+      const pub = p.match(/^(\d+)→(\d+)\/tcp$/);
+      if (pub){
+        opts.push({url: `http://host.docker.internal:${pub[1]}/`, label: `${c.name} — host :${pub[1]}`});
+        opts.push({url: `http://${c.name}:${pub[2]}/`,            label: `${c.name} — internal :${pub[2]}`});
+        continue;
+      }
+      // "3000/tcp": internal-only, reachable by container name on a shared net.
+      const priv = p.match(/^(\d+)\/tcp$/);
+      if (priv) opts.push({url: `http://${c.name}:${priv[1]}/`, label: `${c.name} — internal :${priv[1]}`});
+    }
+  }
+  sel.innerHTML = '<option value="">running containers…</option>' +
+    opts.map(o => `<option value="${esc(o.url)}">${esc(o.label)}</option>`).join('');
+  // The health-check "add" form reuses the very same container URLs as a
+  // quick-fill, so populate that dropdown from the same list.
+  const hcSel = $('hc-shortcut');
+  if (hcSel) hcSel.innerHTML = '<option value="">container…</option>' +
+    opts.map(o => `<option value="${esc(o.url)}">${esc(o.label)}</option>`).join('');
+}
+// Selecting a shortcut copies its URL into the bar, then resets the dropdown so
+// the same entry can be chosen again.
+$('a-shortcut').onchange = () => {
+  if ($('a-shortcut').value){
+    $('a-url').value = $('a-shortcut').value;
+    $('a-shortcut').value = '';
+  }
+};
+
+// Body templates for the two structured protocols.
+const GRAPHQL_TEMPLATE = '{\n  "query": "query {\\n    \\n}",\n  "variables": {}\n}';
+const JSONRPC_TEMPLATE = '{\n  "jsonrpc": "2.0",\n  "method": "",\n  "params": [],\n  "id": 1\n}';
+
+// applyProto reshapes the form for the chosen request type:
+//  - REST     : any method; body shown only for methods that carry one.
+//  - GraphQL  : always POST, JSON body seeded with a query template.
+//  - JSON-RPC : always POST, JSON body seeded with a jsonrpc 2.0 envelope.
+function applyProto(){
+  const proto = $('a-proto').value;
+  const method = $('a-method'), wrap = $('a-body-wrap'), body = $('a-body'), label = $('a-body-label');
+  if (proto === 'rest'){
+    method.disabled = false;
+    label.textContent = 'Body';
+    toggleRestBody();
+    return;
+  }
+  // GraphQL and JSON-RPC are POST-with-JSON-body by definition.
+  method.value = 'POST';
+  method.disabled = true;
+  wrap.style.display = '';
+  if (proto === 'graphql'){
+    label.textContent = 'GraphQL query';
+    // Seed the template only if the box is empty or still holds the other
+    // protocol's template (so we never clobber something you typed).
+    if (!body.value.trim() || body.value === JSONRPC_TEMPLATE) body.value = GRAPHQL_TEMPLATE;
+  } else {
+    label.textContent = 'JSON-RPC payload';
+    if (!body.value.trim() || body.value === GRAPHQL_TEMPLATE) body.value = JSONRPC_TEMPLATE;
+  }
+}
+// toggleRestBody shows the body box only for REST methods that carry one.
+function toggleRestBody(){
+  const m = $('a-method').value;
+  $('a-body-wrap').style.display = ['POST','PUT','PATCH','DELETE'].includes(m) ? '' : 'none';
+}
+$('a-proto').onchange = applyProto;
+$('a-method').onchange = () => { if ($('a-proto').value === 'rest') toggleRestBody(); };
+applyProto();   // set the initial state (REST)
+
+$('a-send').onclick = async () => {
+  // Read the full URL as typed. If there's no scheme, assume http:// so you can
+  // type "localhost:3000/x" or "my-api:8080/x" without the prefix.
+  let url = $('a-url').value.trim();
+  if (!url){ alert('enter a URL'); return; }
+  if (!/^https?:\/\//i.test(url)) url = 'http://' + url;
+
+  const proto = $('a-proto').value;
+
+  // Parse the headers textarea into a map.
+  const headers = {};
+  for (const line of $('a-headers').value.split('\n')){
+    const i = line.indexOf(':');
+    if (i > 0) headers[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+  }
+  // GraphQL / JSON-RPC send JSON — default the Content-Type unless you set one.
+  const hasContentType = Object.keys(headers).some(h => h.toLowerCase() === 'content-type');
+  if ((proto === 'graphql' || proto === 'jsonrpc') && !hasContentType)
+    headers['Content-Type'] = 'application/json';
+
+  // Body only when its box is visible (REST GET/HEAD/etc. send none).
+  const sendBody = $('a-body-wrap').style.display === 'none' ? '' : $('a-body').value;
+
+  const out = $('api-out'), meta = $('api-meta'), body = $('api-body');
+  out.style.display = 'block';
+  meta.textContent = 'sending…'; body.textContent = '';
+  try {
+    const r = await fetch('/api/probe', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ url, method: $('a-method').value, headers, body: sendBody })
+    });
+    if (r.status === 401){ showLogin(); return; }
+    const p = await r.json();
+    if (p.error){
+      meta.innerHTML = badge('s-crit', 'FAILED') + ` <span>${esc(p.error)}</span>`;
+      return;
+    }
+    const ok = p.status >= 200 && p.status < 400;
+    meta.innerHTML = badge(ok ? 's-good' : 's-crit', p.status_str) +
+      `<span>${p.latency_ms} ms</span><span>${esc(p.headers['Content-Type'] || '')}</span>`;
+    let text = p.body || '(empty body)';
+    try { text = JSON.stringify(JSON.parse(text), null, 2); } catch {}
+    body.textContent = text + (p.truncated ? '\n…(truncated)' : '');
+  } catch (err) { meta.textContent = 'request failed: ' + err; }
+};
+
+/* ---------- health check management (add / remove) ---------- */
+// Toggle the add-check form open/closed.
+$('hc-add-toggle').onclick = () => {
+  const f = $('hc-form');
+  f.style.display = f.style.display === 'none' ? '' : 'none';
+};
+// Picking a container drops its URL into the URL field, then resets.
+$('hc-shortcut').onchange = () => {
+  if ($('hc-shortcut').value){
+    $('hc-url').value = $('hc-shortcut').value;
+    $('hc-shortcut').value = '';
+  }
+};
+// Submit a new check to POST /api/checks.
+$('hc-add').onclick = async () => {
+  const err = $('hc-err'); err.textContent = '';
+  let url = $('hc-url').value.trim();
+  if (!url){ err.textContent = 'enter a URL'; return; }
+  // Default to http:// so "container:8080/x" or "example.com/x" work too.
+  if (!/^https?:\/\//i.test(url)) url = 'http://' + url;
+  // Parse "200,204" into [200,204]; empty means "any 2xx/3xx".
+  const expect = $('hc-expect').value.split(',')
+    .map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+  const body = {
+    name: $('hc-name').value.trim(),
+    url,
+    interval: parseInt($('hc-interval').value, 10) || 30,
+    expect_status: expect,
+  };
+  try {
+    const r = await fetch('/api/checks', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    });
+    if (r.status === 401){ showLogin(); return; }
+    const p = await r.json();
+    if (p.error){ err.textContent = p.error; return; }
+    // Clear + hide the form, then refresh so the new card appears.
+    $('hc-name').value = ''; $('hc-url').value = ''; $('hc-expect').value = '';
+    $('hc-form').style.display = 'none';
+    refresh();
+  } catch (e) { err.textContent = 'failed: ' + e; }
+};
+// Remove a check when its × is clicked (event-delegated on the grid).
+$('checks').addEventListener('click', async e => {
+  const id = e.target.getAttribute && e.target.getAttribute('data-remove-check');
+  if (!id) return;
+  if (!confirm('Remove this health check?')) return;
+  try {
+    const r = await fetch('/api/checks/remove', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id})
+    });
+    if (r.status === 401){ showLogin(); return; }
+    refresh();
+  } catch (e) { /* ignore; next poll reflects reality */ }
+});
+
+/* ---------- requests (nginx proxy manager access logs) ---------- */
+// The most recent fetch from /api/requests is cached here so that changing a
+// filter re-renders instantly without waiting for the next poll.
+let rqData = [];
+// Why the list is empty, straight from the backend ('' when all is well).
+let rqError = '';
+
+// statusClass maps an HTTP status code onto one of the badge colour classes
+// (green 2xx, muted 3xx, amber 4xx, red 5xx) used everywhere else in the UI.
+function statusClass(code){
+  if (code >= 500) return 's-crit';
+  if (code >= 400) return 's-warn';
+  if (code >= 300) return 's-mut';
+  return 's-good';
+}
+
+// rqFilters reads the current values of the four filter controls into a small
+// object so renderRequests can apply them.
+function rqFilters(){
+  return {
+    domain: $('rq-domain').value,                 // '' means all domains
+    method: $('rq-method').value,                 // '' means any method
+    status: $('rq-status').value,                 // '' or first digit '2'..'5'
+    search: $('rq-search').value.trim().toLowerCase(), // substring match on path
+  };
+}
+
+// syncRqDropdowns rebuilds the domain/method option lists from whatever
+// domains and methods actually appear in the current data, so you only ever
+// filter by things that exist. The previously-selected value is preserved.
+function syncRqDropdowns(){
+  // Collect the distinct domains and methods present in the cached rows.
+  const domains = [...new Set(rqData.map(e => e.domain))].sort();
+  const methods = [...new Set(rqData.map(e => e.method))].sort();
+
+  // Rebuild the domain <select>, keeping the current choice if still valid.
+  const dsel = $('rq-domain'), dcur = dsel.value;
+  dsel.innerHTML = '<option value="">all domains</option>' +
+    domains.map(d => `<option value="${esc(d)}">${esc(d)}</option>`).join('');
+  if ([...dsel.options].some(o => o.value === dcur)) dsel.value = dcur;
+
+  // Rebuild the method <select> the same way.
+  const msel = $('rq-method'), mcur = msel.value;
+  msel.innerHTML = '<option value="">any method</option>' +
+    methods.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+  if ([...msel.options].some(o => o.value === mcur)) msel.value = mcur;
+}
+
+// renderRequests draws the table from the cached data with the active filters
+// applied. It's called both after a fetch and whenever a filter changes.
+function renderRequests(){
+  const f = rqFilters();
+
+  // Keep only the rows that pass every active filter. An empty filter value
+  // matches everything, so unset filters simply don't narrow the list.
+  const rows = rqData.filter(e =>
+    (!f.domain || e.domain === f.domain) &&
+    (!f.method || e.method === f.method) &&
+    // status filter compares just the leading digit (2/3/4/5) of the code
+    (!f.status || String(e.status).startsWith(f.status)) &&
+    (!f.search || e.path.toLowerCase().includes(f.search))
+  );
+
+  // Empty state: either nothing matches the filters, or there is no data —
+  // in which case the backend explains why (dir not mounted, wrong dir,
+  // unrecognised log format, no traffic yet).
+  if (!rows.length){
+    $('requests').innerHTML = rqData.length
+      ? '<div class="empty">no requests match the current filters</div>'
+      : (rqError
+          ? `<div class="empty" style="color:var(--serious)">${esc(rqError)}</div>`
+          : '<div class="empty">no requests yet</div>');
+    return;
+  }
+
+  // Build one <tr> per surviving request. Time is shown as a local
+  // wall-clock time; the coloured dot encodes the status class.
+  const html = rows.map(e => `<tr>
+      <td class="num">${e.time ? new Date(e.time*1000).toLocaleTimeString() : '–'}</td>
+      <td class="name">${esc(e.domain)}</td>
+      <td>${esc(e.method)}</td>
+      <td class="img">${esc(e.path)}</td>
+      <td>${badge(statusClass(e.status), e.status || '?')}</td>
+      <td class="img">${esc(e.client)}</td>
+    </tr>`).join('');
+
+  $('requests').innerHTML = `<table><thead><tr>
+      <th class="num">Time</th><th>Domain</th><th>Method</th>
+      <th>Path</th><th>Status</th><th>Client IP</th>
+    </tr></thead><tbody>${html}</tbody></table>`;
+}
+
+// refreshRequests pulls the latest entries from the backend, caches them,
+// refreshes the dropdown options, and re-renders. Auth and network failures
+// degrade the same way the rest of the app does (show login / stay quiet).
+async function refreshRequests(){
+  if (loggedOut) return;
+  try {
+    const r = await fetch('/api/requests?limit=300');
+    if (r.status === 401){ showLogin(); return; }
+    const p = await r.json() || {};
+    rqData = p.requests || [];
+    rqError = p.error || '';
+    syncRqDropdowns();
+    renderRequests();
+  } catch (e) { /* keep the last good render on a transient error */ }
+}
+
+// Re-render immediately on any filter change (uses the cached data, no fetch).
+for (const id of ['rq-domain','rq-method','rq-status'])
+  $(id).addEventListener('change', renderRequests);
+$('rq-search').addEventListener('input', renderRequests);
+
+/* ---------- perch self-monitoring (own logs + incoming requests) ---------- */
+// refreshSelfLog pulls perch's OWN log output (/api/self/logs) into the
+// "Perch (self)" card, preserving scroll position when already at bottom.
+async function refreshSelfLog(){
+  if (loggedOut) return;
+  try {
+    const r = await fetch('/api/self/logs');
+    if (r.status === 401){ showLogin(); return; }
+    const p = await r.json();
+    const box = $('self-logbox');
+    const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+    box.textContent = p.text || '(no log output yet)';
+    if (atBottom) box.scrollTop = box.scrollHeight;
+    $('self-log-age').textContent = new Date().toLocaleTimeString();
+  } catch (e) { /* keep last render on a transient error */ }
+}
+$('self-log-refresh').onclick = () => refreshSelfLog();
+$('self-log-copy').onclick = async () => {
+  await copyText($('self-logbox').textContent || '');
+  flashCopied($('self-log-copy'));
+};
+
+// refreshSelfRequests renders the access log of requests hitting perch
+// itself (/api/self/requests) as a table, newest first.
+async function refreshSelfRequests(){
+  if (loggedOut) return;
+  try {
+    const r = await fetch('/api/self/requests');
+    if (r.status === 401){ showLogin(); return; }
+    let rows = await r.json() || [];
+    // The buffer holds up to 500; only show the most recent N (newest-first),
+    // otherwise the dashboard's own polling floods the table.
+    const limit = parseInt($('self-rq-limit').value, 10) || 50;
+    rows = rows.slice(0, limit);
+    if (!rows.length){
+      $('self-requests').innerHTML = '<div class="empty">no requests recorded yet</div>';
+      return;
+    }
+    const html = rows.map(e => `<tr>
+        <td class="num">${e.time ? new Date(e.time*1000).toLocaleTimeString() : '–'}</td>
+        <td>${esc(e.method)}</td>
+        <td class="img">${esc(e.path)}</td>
+        <td>${badge(statusClass(e.status), e.status || '?')}</td>
+        <td class="num">${e.latency_ms} ms</td>
+        <td class="img">${esc(e.ip)}</td>
+      </tr>`).join('');
+    $('self-requests').innerHTML = `<table><thead><tr>
+        <th class="num">Time</th><th>Method</th><th>Path</th><th>Status</th>
+        <th class="num">Latency</th><th>Client IP</th>
+      </tr></thead><tbody>${html}</tbody></table>`;
+  } catch (e) { /* keep last render on a transient error */ }
+}
+// Changing the limit re-renders immediately from the next fetch.
+$('self-rq-limit').onchange = refreshSelfRequests;
+
+/* ---------- inspect (read-only container internals) ---------- */
+let insData = null;      // last fetched inspect result
+let insShowEnv = false;  // whether env VALUES are revealed (masked by default)
+
+// Populate the container picker from the overview's container list.
+function updateInspectSelect(containers){
+  const sel = $('ins-select');
+  const cur = sel.value;
+  sel.innerHTML = (containers && containers.length)
+    ? containers.map(c => `<option value="${esc(c.id)}">${esc(c.name)}${c.state !== 'running' ? ' — ' + esc(c.state) : ''}</option>`).join('')
+    : '<option value="">no containers</option>';
+  if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+}
+
+// Fetch the read-only internals for the selected container.
+async function fetchInspect(){
+  const id = $('ins-select').value;
+  if (!id){ $('inspect').innerHTML = '<div class="empty">no containers</div>'; return; }
+  $('inspect').innerHTML = '<div class="empty">loading…</div>';
+  try {
+    const r = await fetch('/api/inspect?id=' + encodeURIComponent(id));
+    if (r.status === 401){ showLogin(); return; }
+    insData = await r.json();
+    renderInspect();
+  } catch (e) { $('inspect').innerHTML = '<div class="empty">failed to load: ' + esc(e) + '</div>'; }
+}
+$('ins-select').onchange = fetchInspect;
+$('ins-refresh').onclick = fetchInspect;
+
+// Render the last fetched result: summary, processes, mounts, env (values
+// masked until revealed, since they often hold secrets), and fs changes.
+function renderInspect(){
+  const d = insData;
+  if (!d) return;
+  if (d.error){
+    $('inspect').innerHTML = `<div class="card empty" style="color:var(--serious)">${esc(d.error)}</div>`;
+    return;
+  }
+  const stateCls = d.state === 'running'
+    ? (d.health === 'unhealthy' ? 's-crit' : d.health === 'starting' ? 's-warn' : 's-good')
+    : 's-mut';
+  const started = d.started_at && !d.started_at.startsWith('0001')
+    ? new Date(d.started_at).toLocaleString() : '–';
+
+  // summary
+  let html = `<div class="card" style="margin-bottom:10px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+      <span class="name" style="font-size:15px">${esc(d.name)}</span>
+      ${badge(stateCls, d.state + (d.health && d.health !== 'none' ? ' · ' + d.health : ''))}
+    </div>
+    <div class="img" style="margin-top:6px">${esc(d.image)}</div>
+    ${d.command ? `<div class="img" style="margin-top:4px;color:var(--muted)">cmd: ${esc(d.command)}</div>` : ''}
+    <div style="display:flex;gap:16px;color:var(--ink-2);font-size:12.5px;margin-top:8px;flex-wrap:wrap">
+      <span>started ${started}</span><span>restarts: ${d.restart_count}</span></div>
+  </div>`;
+
+  // processes (from `docker top`)
+  if ((d.processes || []).length){
+    const th = (d.proc_titles || []).map(t => `<th>${esc(t)}</th>`).join('');
+    const rows = d.processes.map(p => `<tr>${p.map(c => `<td class="img">${esc(c)}</td>`).join('')}</tr>`).join('');
+    html += `<h2 style="margin-top:14px">Processes</h2>
+      <div class="card" style="padding:4px 6px;overflow-x:auto"><table><thead><tr>${th}</tr></thead><tbody>${rows}</tbody></table></div>`;
+  }
+
+  // mounts
+  if ((d.mounts || []).length){
+    const rows = d.mounts.map(m => `<tr>
+      <td class="img">${esc(m.source || '(anonymous volume)')}</td>
+      <td class="img">${esc(m.destination)}</td>
+      <td>${m.rw ? 'rw' : 'ro'}</td></tr>`).join('');
+    html += `<h2 style="margin-top:14px">Mounts</h2>
+      <div class="card" style="padding:4px 6px;overflow-x:auto"><table><thead><tr>
+        <th>Source (host)</th><th>Destination</th><th>Mode</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  }
+
+  // environment — values masked by default (they frequently contain secrets)
+  if ((d.env || []).length){
+    const rows = d.env.map(e => {
+      const i = e.indexOf('=');
+      const k = i >= 0 ? e.slice(0, i) : e;
+      const v = i >= 0 ? e.slice(i + 1) : '';
+      return `<div style="font:12px/1.6 ui-monospace,Consolas,monospace;overflow-wrap:anywhere">
+        <span style="color:var(--accent)">${esc(k)}</span>=${insShowEnv ? esc(v) : '<span style="color:var(--muted)">••••••••</span>'}</div>`;
+    }).join('');
+    html += `<h2 style="margin-top:14px">Environment
+      <span class="logbar"><button class="ghost" id="ins-env-toggle" type="button">${insShowEnv ? 'hide values' : 'show values'}</button></span></h2>
+      <div class="card">${rows}</div>`;
+  }
+
+  // filesystem changes (from `docker diff`)
+  if ((d.changes || []).length){
+    const rows = d.changes.slice(0, 500).map(c => `<div style="font:12px/1.6 ui-monospace,Consolas,monospace;overflow-wrap:anywhere">
+      <span style="color:var(--muted)">${esc(c.kind)}</span> ${esc(c.path)}</div>`).join('');
+    html += `<h2 style="margin-top:14px">Filesystem changes (${d.changes.length})</h2><div class="card">${rows}</div>`;
+  }
+
+  $('inspect').innerHTML = html;
+  // wire the env reveal toggle (re-created on each render)
+  const toggle = $('ins-env-toggle');
+  if (toggle) toggle.onclick = () => { insShowEnv = !insShowEnv; renderInspect(); };
+}
+
+/* ---------- trends (machine sparklines) ---------- */
+// sparkline draws a tiny inline SVG line for a 0–100 percent series. The
+// polyline scales to the box width; a non-scaling stroke keeps it crisp.
+function sparkline(values, color){
+  if (!values.length) return '';
+  const w = 240, h = 40;
+  const step = values.length > 1 ? w / (values.length - 1) : w;
+  const pts = values.map((v, i) =>
+    `${(i * step).toFixed(1)},${(h - Math.min(100, Math.max(0, v)) / 100 * h).toFixed(1)}`).join(' ');
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="width:100%;height:40px;display:block;margin-top:6px">
+    <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>`;
+}
+function trendCard(label, cur, values){
+  const mins = Math.max(1, Math.round(values.length / 4)); // ~15s per sample → 4/min
+  return `<div class="card">
+    <div class="label" style="font-size:12px;color:var(--muted)">${label}</div>
+    <div class="value" style="font-size:20px;font-weight:600">${cur.toFixed(1)}<small style="font-size:12px;color:var(--ink-2);font-weight:400"> %</small></div>
+    ${sparkline(values, 'var(--accent)')}
+    <div style="font-size:11px;color:var(--muted);margin-top:2px">last ~${mins} min</div></div>`;
+}
+async function fetchTrends(){
+  if (loggedOut) return;
+  try {
+    const r = await fetch('/api/trends');
+    if (r.status === 401) return;
+    const s = await r.json() || [];
+    if (!s.length){ $('trends').innerHTML = ''; return; }
+    const last = s[s.length - 1];
+    let html = trendCard('CPU trend', last.cpu, s.map(x => x.cpu))
+      + trendCard('Memory trend', last.mem, s.map(x => x.mem));
+    if (s.some(x => x.swap > 0)) html += trendCard('Swap trend', last.swap, s.map(x => x.swap));
+    $('trends').innerHTML = html;
+  } catch (e) { /* keep last render */ }
+}
+
+/* ---------- alerts (notification status + save + test) ---------- */
+// Lightweight status from the overview poll (just enabled/disabled). The full
+// picture (source + saved URL) comes from fetchAlerts() -> GET /api/alerts.
+function renderAlerts(enabled){
+  if (enabled) return; // fetchAlerts() paints the detailed "enabled" line
+  $('alerts-status').innerHTML =
+    '<span style="color:var(--muted)">no webhook yet — paste a Discord or Slack webhook URL below, save, and you\'ll get alerts on DOWN checks, unhealthy containers, and full disks</span>';
+}
+// Fetch the current webhook config and paint the status + prefill the field.
+async function fetchAlerts(){
+  try {
+    const r = await fetch('/api/alerts');
+    if (!r.ok) return;
+    const a = await r.json();
+    if (a.source === 'env'){
+      $('alerts-status').innerHTML = badge('s-good', 'enabled') +
+        ' <span style="color:var(--ink-2)">using <code>ALERT_WEBHOOK_URL</code> from the environment. Saving a URL below overrides it.</span>';
+    } else if (a.source === 'ui'){
+      $('alerts-status').innerHTML = badge('s-good', 'enabled') +
+        ' <span style="color:var(--ink-2)">posts to your saved webhook on DOWN checks, unhealthy containers, and full disks</span>';
+    } else {
+      renderAlerts(false);
+    }
+    // Only the UI-saved URL is echoed back; an env secret stays hidden.
+    if (a.url) $('alerts-url').value = a.url;
+  } catch (e) { /* non-fatal */ }
+}
+// A tiny transient message under the buttons.
+function alertsMsg(text, ok){
+  const el = $('alerts-msg');
+  el.textContent = text;
+  el.style.color = ok === true ? 'var(--good)' : ok === false ? 'var(--crit)' : 'var(--ink-2)';
+}
+$('alerts-save').onclick = async () => {
+  const url = $('alerts-url').value.trim();
+  alertsMsg('saving…');
+  try {
+    const r = await fetch('/api/alerts/save', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({url})
+    });
+    const p = await r.json().catch(() => ({}));
+    if (r.ok){ alertsMsg(url ? '✓ saved' : '✓ cleared — falling back to env', true); fetchAlerts(); }
+    else alertsMsg('failed: ' + (p.error || r.status), false);
+  } catch (e) { alertsMsg('failed: ' + e, false); }
+};
+$('alerts-test').onclick = async () => {
+  // Test the value in the box if present (lets you verify BEFORE saving),
+  // otherwise the active webhook.
+  const url = $('alerts-url').value.trim();
+  alertsMsg('sending test…');
+  try {
+    const r = await fetch('/api/alerts/test', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(url ? {url} : {})
+    });
+    const p = await r.json().catch(() => ({}));
+    alertsMsg(r.ok ? '✓ sent — check your channel' : ('failed: ' + (p.error || r.status)), r.ok);
+  } catch (e) { alertsMsg('failed: ' + e, false); }
+};
+
+/* ---------- usage (API spend) ---------- */
+const money = v => '$' + (v || 0).toFixed(2);
+function renderUsage(p){
+  $('usage-updated').textContent = p.updated ? 'updated ' + new Date(p.updated * 1000).toLocaleTimeString() : '';
+  if (!p.configured){
+    $('usage').innerHTML = '<div class="card empty">not configured — set OPENAI_ADMIN_KEY and/or ANTHROPIC_ADMIN_KEY (org <b>admin</b> keys, read server-side only) to see spend here</div>';
+    return;
+  }
+  const provs = p.providers || [];
+  if (!provs.length){ $('usage').innerHTML = '<div class="card empty">loading…</div>'; return; }
+  $('usage').innerHTML = provs.map(pr => `<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <span style="font-weight:600">${esc(pr.name)}</span>${pr.error ? badge('s-crit', 'error') : badge('s-good', 'ok')}</div>
+    ${pr.error
+      ? `<div style="color:var(--serious);font-size:12px;margin-top:6px;overflow-wrap:anywhere">${esc(pr.error)}</div>`
+      : `<div class="value" style="font-size:24px;font-weight:600;margin-top:8px">${money(pr.month_to_date)}<small style="font-size:12px;color:var(--muted);font-weight:400"> this month</small></div>
+         <div style="color:var(--ink-2);font-size:12.5px;margin-top:2px">${money(pr.today)} today</div>`}
+  </div>`).join('');
+}
+async function fetchUsage(force){
+  if (loggedOut) return;
+  try {
+    const r = await fetch(force ? '/api/usage/refresh' : '/api/usage', force ? {method: 'POST'} : {});
+    if (r.status === 401){ showLogin(); return; }
+    renderUsage(await r.json());
+  } catch (e) { $('usage').innerHTML = '<div class="card empty">failed to load usage</div>'; }
+}
+$('usage-refresh').onclick = () => fetchUsage(true);
+
+/* ---------- timers ---------- */
+refresh();
+refreshRequests();
+setTimeout(refreshAllLogs, 800);
+setTimeout(refreshSelfLog, 800);
+setTimeout(refreshSelfRequests, 800);
+setInterval(() => { if (!document.hidden) refresh(); }, 5000);
+// Logs refresh at most once a minute (container logs + perch's own logs).
+setInterval(() => { if (!document.hidden) refreshAllLogs(); }, 60000);
+setInterval(() => { if (!document.hidden) refreshSelfLog(); }, 60000);
+// The two request tables are cheap, poll them a bit more often.
+setInterval(() => { if (!document.hidden) refreshRequests(); }, 10000);
+setInterval(() => { if (!document.hidden) refreshSelfRequests(); }, 10000);
+// Trends refresh with the collector; usage is warmed once (cost data is daily).
+fetchTrends();
+fetchAlerts();
+setTimeout(() => fetchUsage(false), 1000);
+setInterval(() => { if (!document.hidden) fetchTrends(); }, 15000);
+</script>
+</body>
+</html>

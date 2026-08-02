@@ -1,0 +1,14 @@
+.env
+
+# compiled Go binary — rebuilt by `go build` / the Dockerfile, never committed
+perch
+
+# UI-managed checks persistence (written at runtime; local-dev only path)
+checks.state.json
+
+# UI-saved alert webhook URL (written at runtime; local-dev only path)
+alert.state.json
+
+# Playwright MCP scratch output (page snapshots, console dumps, screenshots)
+# written into the working directory whenever the browser tool drives the UI
+.playwright-mcp/

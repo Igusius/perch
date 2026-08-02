@@ -1,0 +1,113 @@
+# perch — single-file stack for Portainer (and local use).
+#
+# VPS / Portainer:
+#   1. Set the PERCH_KEY environment variable in the Portainer stack
+#      (generate one: openssl rand -hex 24). The stack refuses to start
+#      without it.
+#   2. The image comes from GHCR (built by .github/workflows/publish.yml on
+#      every push). Adjust the owner below if your GitHub username differs.
+#   3. Reaching it through nginx proxy manager (NPM): an NPM *container*
+#      cannot reach the loopback port binding below — use the shared
+#      network instead:
+#        a) docker network create proxy          (once, on the VPS)
+#        b) docker network connect proxy <your-npm-container>
+#        c) uncomment the two "proxy" lines below and remove the ports: block
+#        d) in NPM: new proxy host -> forward to  perch : 3535
+#   4. Never publish "3535:3535" on a VPS — published Docker ports bypass
+#      ufw/firewalld and would be open to the whole internet.
+#
+# Local development (this repo checked out): docker-compose.override.yml
+# (gitignored) adds `build: .` and the NVIDIA GPU reservation automatically;
+# just run `docker compose up -d --build`.
+
+name: perch
+
+services:
+  perch:
+    image: ghcr.io/igusius/perch:latest
+    container_name: perch
+    hostname: perch
+    restart: unless-stopped
+    ports:
+      # loopback-only: reachable from the VPS itself, never from the internet
+      - "127.0.0.1:3535:3535"
+    environment:
+      - HOST_PROC=/host/proc
+      - HOST_SYS=/host/sys
+      - HOST_ROOT=/host/root
+      # all Docker API access goes through the read-only socket-proxy below
+      - DOCKER_HOST=tcp://socket-proxy:2375
+      - ACCESS_KEY=${PERCH_KEY:?PERCH_KEY is required — openssl rand -hex 24}
+    volumes:
+      # host visibility, all read-only
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro,rslave
+      # Health checks are added from the dashboard ("+ add check") and persist
+      # in /data below. To declare them up front instead, set CHECKS_YAML.
+      # Checks that reach other containers BY NAME (http://my-api:8080) need
+      # perch on the shared `proxy` network — see note 3 in the header.
+      # writable volume for the banned-IPs file and saved checks (rootfs is
+      # read-only)
+      - ban-data:/data
+      # OPTIONAL — powers the "Requests" tile. If you front your services with
+      # nginx proxy manager (NPM), it writes one access log per proxy host under
+      # its /data/logs. Mount that host directory here READ-ONLY and perch
+      # tails every incoming HTTP request (method/domain/path/status) across all
+      # your proxied services. Find your NPM data path with:
+      #   docker inspect <npm-container> --format '{{json .Mounts}}'
+      # then uncomment the line below and point it at <that path>/logs:
+      # - /path/to/npm/data/logs:/npm-logs:ro
+    # makes host.docker.internal resolve on plain Linux hosts (probe targets)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # blast-radius hardening: no capabilities, no privilege escalation, no
+    # writable filesystem, bounded memory/processes
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 256m
+    pids_limit: 256
+    depends_on:
+      - socket-proxy
+    networks:
+      - default
+      - docker-api
+      # - proxy
+
+  # Read-only gate in front of the Docker socket. Everything defaults to
+  # deny; CONTAINERS=1 allows only GET /containers/* (list, inspect, stats,
+  # logs — exactly what perch needs). POST/DELETE stay forbidden, so a
+  # hijacked perch cannot create/start/stop containers or touch the
+  # rest of the Docker API.
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy
+    container_name: perch-socket-proxy
+    restart: unless-stopped
+    environment:
+      - CONTAINERS=1
+      - POST=0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    # deliberately NO ports: — only perch can reach it, on an internal
+    # network with no route to the outside
+    networks:
+      - docker-api
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 64m
+    pids_limit: 128
+
+volumes:
+  ban-data:
+
+networks:
+  default:
+  docker-api:
+    internal: true
+  # shared reverse-proxy network for nginx proxy manager (see header notes)
+  # proxy:
+  #   external: true

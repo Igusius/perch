@@ -1,0 +1,63 @@
+# Runs the tests on every push and pull request, then builds the image and
+# pushes it to GitHub Container Registry on pushes to main/master. The result
+# is ghcr.io/<owner>/perch:latest - exactly what docker-compose.yml pulls on
+# the VPS. Uses the automatic GITHUB_TOKEN; no secrets to configure.
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - run: gofmt -l . | tee /dev/stderr | (! read)
+      - run: go vet ./...
+      - run: go test ./...
+
+  build-and-push:
+    needs: test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # metadata-action lowercases the owner (GHCR requires lowercase)
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/perch
+          tags: |
+            type=raw,value=latest
+            type=sha
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # git tag on a tag push, short sha on a branch push
+          build-args: |
+            VERSION=${{ github.ref_type == 'tag' && github.ref_name || format('dev-{0}', steps.meta.outputs.version) }}

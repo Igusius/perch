@@ -1,0 +1,12 @@
+# secrets and local runtime state
+.env
+*.state.json
+
+# host-built binary; the image builds its own
+perch
+
+# not needed to build
+.git
+.github
+.playwright-mcp/
+*.md
