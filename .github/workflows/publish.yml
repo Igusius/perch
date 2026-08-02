@@ -41,6 +41,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # the version baked into the binary: the git tag on a tag push,
+      # else dev-<short sha> so every image says exactly what it is
+      - id: ver
+        run: |
+          if [ "${{ github.ref_type }}" = tag ]; then
+            echo "value=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=dev-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
       # metadata-action lowercases the owner (GHCR requires lowercase)
       - id: meta
         uses: docker/metadata-action@v5
@@ -58,6 +68,5 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # git tag on a tag push, short sha on a branch push
           build-args: |
-            VERSION=${{ github.ref_type == 'tag' && github.ref_name || format('dev-{0}', steps.meta.outputs.version) }}
+            VERSION=${{ steps.ver.outputs.value }}
