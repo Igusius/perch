@@ -7,11 +7,12 @@ package main
 // "text" (Slack / generic), so a single URL works for the common webhook
 // targets.
 //
-// The webhook URL can be set two ways, checked in this order:
-//   1. A UI-saved value, persisted to a small state file (like health checks).
-//      Set/changed live from the Notifications card — no restart needed.
-//   2. The ALERT_WEBHOOK_URL env var, used as a fallback when nothing is saved.
-// This mirrors the checks model: env seeds a default, the UI takes over.
+// Any number of webhooks can be configured, and every alert goes to ALL of
+// them. They come from two places, and the two are UNIONED (not either/or):
+//   1. ALERT_WEBHOOK_URL — one URL, or several comma-separated. Declared by
+//      whoever deploys the stack, and never removable from the browser.
+//   2. URLs added from the Notifications card, persisted to a small state file
+//      like health checks are. No restart needed.
 
 import (
 	"bytes"
@@ -30,42 +31,39 @@ import (
 
 var alertHTTP = &http.Client{Timeout: 10 * time.Second}
 
-// savedWebhook holds the UI-managed webhook URL. Empty means "nothing saved —
-// fall back to the env var". Guarded by webhookMu because the collect loop
-// reads it while HTTP handlers may write it.
+// savedWebhooks holds the UI-managed webhook URLs. Guarded by webhookMu because
+// the collect loop reads it while HTTP handlers may write it.
 var (
-	webhookMu    sync.RWMutex
-	savedWebhook string
+	webhookMu     sync.RWMutex
+	savedWebhooks []string
 )
 
-// alertWebhookURL returns the URL alerts should post to: the UI-saved value if
-// present, otherwise the ALERT_WEBHOOK_URL env fallback. Empty = alerts off.
-func alertWebhookURL() string {
+// envWebhooks returns the URLs declared in ALERT_WEBHOOK_URL (one, or several
+// comma-separated).
+func envWebhooks() []string { return splitList(os.Getenv("ALERT_WEBHOOK_URL")) }
+
+// alertWebhookURLs returns every webhook an alert should be delivered to: the
+// env-declared ones first, then the UI-added ones, with duplicates dropped so a
+// URL present in both places is only messaged once. Empty = alerts off.
+func alertWebhookURLs() []string {
 	webhookMu.RLock()
-	url := savedWebhook
+	saved := append([]string(nil), savedWebhooks...)
 	webhookMu.RUnlock()
-	if url != "" {
-		return url
+
+	seen := map[string]bool{}
+	var out []string
+	for _, url := range append(envWebhooks(), saved...) {
+		if url == "" || seen[url] {
+			continue
+		}
+		seen[url] = true
+		out = append(out, url)
 	}
-	return os.Getenv("ALERT_WEBHOOK_URL")
+	return out
 }
 
-// webhookSource reports where the active URL came from, for the UI to show.
-func webhookSource() string {
-	webhookMu.RLock()
-	saved := savedWebhook
-	webhookMu.RUnlock()
-	if saved != "" {
-		return "ui"
-	}
-	if os.Getenv("ALERT_WEBHOOK_URL") != "" {
-		return "env"
-	}
-	return "none"
-}
-
-// alertsEnabled reports whether any webhook (UI-saved or env) is configured.
-func alertsEnabled() bool { return alertWebhookURL() != "" }
+// alertsEnabled reports whether at least one webhook is configured.
+func alertsEnabled() bool { return len(alertWebhookURLs()) > 0 }
 
 var (
 	alertMu       sync.Mutex
@@ -150,13 +148,62 @@ func evaluateAlerts(m *MachineSnapshot, containers []Container, checks []CheckSt
 	alertsPrimed = true
 }
 
-// notify POSTs a message to the currently-active webhook (UI-saved or env).
-func notify(msg string) error {
-	url := alertWebhookURL()
-	if url == "" {
-		return fmt.Errorf("no webhook configured")
+// notify delivers a message to every configured webhook, concurrently.
+//
+// It does not wait for the posts to finish. evaluateAlerts calls this while
+// holding alertMu on the collect-loop goroutine, so a webhook that burns its
+// full 10s timeout must not stall metric collection — let alone several of them
+// one after another. Nothing consumes the result, so failures are just logged.
+func notify(msg string) {
+	for _, url := range alertWebhookURLs() {
+		go func() {
+			if err := notifyURL(url, msg); err != nil {
+				log.Printf("alert: %s: %v", maskURL(url), err)
+			}
+		}()
 	}
-	return notifyURL(url, msg)
+}
+
+// notifyAll posts to every configured webhook and waits, returning one result
+// per URL. Used by the test button, which has to tell the user which targets
+// actually worked.
+func notifyAll(msg string) []webhookResult {
+	urls := alertWebhookURLs()
+	results := make([]webhookResult, len(urls))
+	var wg sync.WaitGroup
+	for i, url := range urls {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i] = webhookResult{URL: maskURL(url), OK: true}
+			if err := notifyURL(url, msg); err != nil {
+				results[i].OK = false
+				results[i].Error = err.Error()
+			}
+		}()
+	}
+	wg.Wait()
+	return results
+}
+
+// webhookResult is the per-URL outcome of a test send.
+type webhookResult struct {
+	URL   string `json:"url"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+// maskURL shortens a webhook URL to scheme://host/… so it can appear in logs
+// and in the UI without leaking the token that the path or query carries.
+func maskURL(rawURL string) string {
+	u, err := neturl.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return "webhook"
+	}
+	if u.Path == "" && u.RawQuery == "" {
+		return u.Scheme + "://" + u.Host
+	}
+	return u.Scheme + "://" + u.Host + "/…"
 }
 
 // notifyURL POSTs a message to a SPECIFIC url. It auto-detects the target:
@@ -170,7 +217,6 @@ func notifyURL(rawURL, msg string) error {
 	}
 	resp, err := alertHTTP.Do(req)
 	if err != nil {
-		log.Printf("alert: webhook post failed: %v", err)
 		return err
 	}
 	defer resp.Body.Close()
@@ -179,7 +225,6 @@ func notifyURL(rawURL, msg string) error {
 		// (e.g. Telegram's "chat not found", Discord's "invalid webhook token").
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 300))
 		detail := strings.TrimSpace(string(snippet))
-		log.Printf("alert: webhook returned HTTP %d: %s", resp.StatusCode, detail)
 		if detail != "" {
 			return fmt.Errorf("webhook returned HTTP %d: %s", resp.StatusCode, detail)
 		}
@@ -236,36 +281,62 @@ func alertStatePath() string {
 	return resolveStatePath("ALERT_STATE_FILE", "/data/alert.json", "alert.state.json")
 }
 
-// loadAlertState reads the saved webhook URL on boot (no-op if none saved yet).
+// alertStateFile is the on-disk shape. WebhookURL is the pre-multi-webhook
+// field, still read so an existing install keeps its notifications working
+// after an upgrade; it is migrated into the list and never written again.
+type alertStateFile struct {
+	WebhookURLs []string `json:"webhook_urls"`
+	WebhookURL  string   `json:"webhook_url,omitempty"` // legacy, read-only
+}
+
+// loadAlertState reads the saved webhook URLs on boot (no-op if none saved yet).
 func loadAlertState() {
 	data, err := os.ReadFile(alertStatePath())
 	if err != nil {
 		return // first run — nothing saved
 	}
-	var file struct {
-		WebhookURL string `json:"webhook_url"`
-	}
+	var file alertStateFile
 	if err := json.Unmarshal(data, &file); err != nil {
 		log.Printf("alerts: ignoring unreadable state file %s: %v", alertStatePath(), err)
 		return
 	}
+
+	urls := file.WebhookURLs
+	migrated := false
+	// Upgrade path: a file written before multi-webhook support carries a single
+	// "webhook_url" and no list. Adopt it rather than silently dropping it.
+	if len(urls) == 0 && strings.TrimSpace(file.WebhookURL) != "" {
+		urls = []string{file.WebhookURL}
+		migrated = true
+	}
+
+	var clean []string
+	for _, u := range urls {
+		if t := strings.TrimSpace(u); t != "" {
+			clean = append(clean, t)
+		}
+	}
+
 	webhookMu.Lock()
-	savedWebhook = strings.TrimSpace(file.WebhookURL)
+	savedWebhooks = clean
 	webhookMu.Unlock()
-	if savedWebhook != "" {
-		log.Printf("alerts: webhook loaded from %s (UI-managed)", alertStatePath())
+
+	if len(clean) > 0 {
+		log.Printf("alerts: %d webhook(s) loaded from %s (UI-managed)", len(clean), alertStatePath())
+	}
+	if migrated {
+		persistAlertState() // rewrite in the new shape so the legacy key goes away
+		log.Printf("alerts: migrated the single saved webhook into the new list format")
 	}
 }
 
-// persistAlertState writes the saved webhook URL. A write failure is logged but
-// never fatal — the URL keeps working in memory for the session.
+// persistAlertState writes the saved webhook URLs. A write failure is logged but
+// never fatal — they keep working in memory for the session.
 func persistAlertState() {
 	webhookMu.RLock()
-	url := savedWebhook
+	urls := append([]string{}, savedWebhooks...)
 	webhookMu.RUnlock()
-	data, _ := json.MarshalIndent(struct {
-		WebhookURL string `json:"webhook_url"`
-	}{url}, "", "  ")
+	data, _ := json.MarshalIndent(alertStateFile{WebhookURLs: urls}, "", "  ")
 	if err := os.WriteFile(alertStatePath(), data, 0600); err != nil {
 		log.Printf("alerts: cannot write %s: %v", alertStatePath(), err)
 	}
@@ -273,29 +344,40 @@ func persistAlertState() {
 
 // --- HTTP handlers -----------------------------------------------------------
 
-// handleAlertsGet serves GET /api/alerts — current webhook status for the UI.
-// The URL itself is returned so the field can be pre-filled, but only when it
-// came from the UI (an env-provided secret is never echoed to the browser).
+// webhookView is one row of the Notifications list as the UI sees it.
+type webhookView struct {
+	URL       string `json:"url"`       // full for UI-added, masked for env-declared
+	Source    string `json:"source"`    // "ui" | "env"
+	Removable bool   `json:"removable"` // env-declared ones are config, not UI state
+}
+
+// handleAlertsGet serves GET /api/alerts — every configured webhook.
+//
+// UI-added URLs are echoed in full so the list is editable; env-declared ones
+// are masked to scheme://host/… because ALERT_WEBHOOK_URL is a deployment
+// secret that the browser was never given in the first place.
 func handleAlertsGet(w http.ResponseWriter, _ *http.Request) {
-	src := webhookSource()
 	webhookMu.RLock()
-	saved := savedWebhook
+	saved := append([]string(nil), savedWebhooks...)
 	webhookMu.RUnlock()
-	shown := ""
-	if src == "ui" {
-		shown = saved // safe to echo: the user typed it here
+
+	views := []webhookView{}
+	for _, url := range envWebhooks() {
+		views = append(views, webhookView{URL: maskURL(url), Source: "env"})
+	}
+	for _, url := range saved {
+		views = append(views, webhookView{URL: url, Source: "ui", Removable: true})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"enabled": alertsEnabled(),
-		"source":  src, // "ui" | "env" | "none"
-		"url":     shown,
+		"enabled":  alertsEnabled(),
+		"webhooks": views,
 	})
 }
 
-// handleAlertsSave serves POST /api/alerts/save — set (or clear) the webhook
-// URL from the UI and persist it. Body: {"url":"https://..."}. An empty url
-// clears the saved value and falls back to the env var.
-func handleAlertsSave(w http.ResponseWriter, r *http.Request) {
+// handleAlertsAdd serves POST /api/alerts — add one webhook. Body:
+// {"url":"https://..."}. Adding a URL that is already configured is a no-op
+// rather than an error, so a double-click can't produce duplicate messages.
+func handleAlertsAdd(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		URL string `json:"url"`
 	}
@@ -304,49 +386,112 @@ func handleAlertsSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	url := strings.TrimSpace(body.URL)
-	// Reject anything that isn't an http(s) URL so we don't persist garbage.
-	if url != "" && !hasHTTPScheme(url) {
+	if url == "" {
+		writeErr(w, http.StatusBadRequest, "enter a webhook URL")
+		return
+	}
+	if !hasHTTPScheme(url) {
 		writeErr(w, http.StatusBadRequest, "URL must start with http:// or https://")
 		return
 	}
+	// Reject a Telegram URL with no chat_id here, where the message can reach
+	// the person typing it, instead of failing silently at delivery time.
+	if _, err := buildNotifyRequest(url, "validation"); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	webhookMu.Lock()
-	savedWebhook = url
+	exists := false
+	for _, u := range savedWebhooks {
+		if u == url {
+			exists = true
+			break
+		}
+	}
+	if !exists {
+		savedWebhooks = append(savedWebhooks, url)
+	}
 	webhookMu.Unlock()
-	persistAlertState()
-	writeJSON(w, http.StatusOK, map[string]any{
-		"enabled": alertsEnabled(),
-		"source":  webhookSource(),
-		"url":     url,
-	})
+
+	if !exists {
+		persistAlertState()
+		log.Printf("alerts: added webhook %s", maskURL(url))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "added": !exists})
 }
 
-// handleAlertTest serves POST /api/alerts/test — fire a test message so the
-// webhook can be confirmed from the UI. If the body carries a "url", that exact
-// URL is probed (lets you test BEFORE saving); otherwise the active webhook is
-// used.
+// handleAlertsRemove serves POST /api/alerts/remove — drop one UI-added
+// webhook. Body: {"url":"https://..."}. Env-declared URLs cannot be removed
+// here; they belong to whoever deployed the stack.
+func handleAlertsRemove(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	target := strings.TrimSpace(body.URL)
+
+	webhookMu.Lock()
+	kept := make([]string, 0, len(savedWebhooks))
+	removed := false
+	for _, u := range savedWebhooks {
+		if u == target {
+			removed = true
+			continue
+		}
+		kept = append(kept, u)
+	}
+	savedWebhooks = kept
+	webhookMu.Unlock()
+
+	if removed {
+		persistAlertState()
+		log.Printf("alerts: removed webhook %s", maskURL(target))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "removed": removed})
+}
+
+// handleAlertTest serves POST /api/alerts/test — send a test message so the
+// webhooks can be confirmed from the UI. With a "url" in the body that exact
+// URL is probed, which lets you check one BEFORE adding it; otherwise every
+// configured webhook is messaged and reported on individually.
 func handleAlertTest(w http.ResponseWriter, r *http.Request) {
-	// Optional {"url": "..."} lets the UI test an unsaved value.
 	var body struct {
 		URL string `json:"url"`
 	}
 	if r.Body != nil {
 		_ = json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body)
 	}
-	target := strings.TrimSpace(body.URL)
-	if target == "" {
-		target = alertWebhookURL() // fall back to the active webhook
-	}
-	if target == "" {
-		writeErr(w, http.StatusBadRequest, "no webhook URL — enter or save one first")
+	const msg = "✅ test alert from perch — notifications are working"
+
+	// Probing one specific (possibly unsaved) URL.
+	if target := strings.TrimSpace(body.URL); target != "" {
+		if !hasHTTPScheme(target) {
+			writeErr(w, http.StatusBadRequest, "URL must start with http:// or https://")
+			return
+		}
+		result := webhookResult{URL: maskURL(target), OK: true}
+		if err := notifyURL(target, msg); err != nil {
+			result.OK, result.Error = false, err.Error()
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": result.OK, "results": []webhookResult{result}})
 		return
 	}
-	if !hasHTTPScheme(target) {
-		writeErr(w, http.StatusBadRequest, "URL must start with http:// or https://")
+
+	// Otherwise: everything that is configured.
+	if !alertsEnabled() {
+		writeErr(w, http.StatusBadRequest, "no webhooks yet — add one first")
 		return
 	}
-	if err := notifyURL(target, "✅ test alert from perch — notifications are working"); err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
-		return
+	results := notifyAll(msg)
+	allOK := true
+	for _, res := range results {
+		if !res.OK {
+			allOK = false
+		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": allOK, "results": results})
 }
