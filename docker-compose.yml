@@ -84,7 +84,7 @@ services:
   # hijacked perch cannot create/start/stop containers or touch the
   # rest of the Docker API.
   socket-proxy:
-    image: tecnativa/docker-socket-proxy
+    image: tecnativa/docker-socket-proxy:v0.5.0
     container_name: perch-socket-proxy
     restart: unless-stopped
     environment:

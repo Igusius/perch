@@ -58,7 +58,7 @@ A `.env` file in the working directory is loaded on startup; the real environmen
 | `ACCESS_KEY` | *(empty = auth off)* | login key; compose wires `PERCH_KEY` into it |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | *(empty = off)* | GitHub OAuth App credentials |
 | `GITHUB_ALLOWED_USERS` | *(empty)* | usernames allowed to sign in, comma-separated |
-| `GITHUB_ALLOWED_EMAILS` | *(empty)* | verified emails allowed to sign in |
+| `GITHUB_ALLOWED_EMAILS` | *(empty)* | verified emails allowed to sign in, comma-separated |
 | `RATE_LIMIT` / `RATE_WINDOW_SECONDS` | `50` / `10` | unauthenticated requests per IP per window |
 | `BAN_HOURS` | `10` | how long an over-limit IP stays banned |
 | `BAN_FILE` | `/data/banned_ips.txt` | ban persistence |
@@ -69,7 +69,7 @@ A `.env` file in the working directory is loaded on startup; the real environmen
 | `ALERT_DISK_PCT` | `90` | percent-full at which a disk alerts |
 | `OPENAI_ADMIN_KEY` / `ANTHROPIC_ADMIN_KEY` | *(empty = tab off)* | org admin keys for the spend tab, read server-side only |
 | `DOCKER_HOST` | *(unix socket)* | `tcp://socket-proxy:2375` for proxied access |
-| `HOST_PROC` / `HOST_SYS` / `HOST_ROOT` | `/host/...` | host proc/sys/rootfs mounts |
+| `HOST_PROC` / `HOST_SYS` / `HOST_ROOT` | *(the container's own `/proc`, `/sys`, `/`)* | where the host's proc/sys/rootfs are mounted; the compose file sets these to `/host/*` |
 | `NVIDIA_SMI_PATH` | *(auto-detect)* | explicit `nvidia-smi` location |
 
 For GitHub login, create an OAuth App with callback URL `https://<your-domain>/api/auth/github/callback`, then set the client ID, secret, and an allowlist.

@@ -248,10 +248,11 @@ pre.resp{background:var(--page);border:1px solid var(--grid);border-radius:8px;
     <h2>Notifications</h2>
     <div class="card" id="alerts">
       <div id="alerts-status" style="color:var(--ink-2);font-size:13px;margin-bottom:8px"></div>
+      <div id="alerts-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <input id="alerts-url" type="text" placeholder="paste a Discord, Slack, or Telegram webhook URL…"
                style="flex:1;min-width:260px" autocomplete="off" spellcheck="false">
-        <button class="ghost" id="alerts-save" type="button">save</button>
+        <button class="ghost" id="alerts-add" type="button">+ add</button>
         <button class="ghost" id="alerts-test" type="button">send test</button>
       </div>
       <div style="color:var(--muted);font-size:11px;margin-top:6px;line-height:1.6">
@@ -1223,32 +1224,45 @@ async function fetchTrends(){
   } catch (e) { /* keep last render */ }
 }
 
-/* ---------- alerts (notification status + save + test) ---------- */
-// Lightweight status from the overview poll (just enabled/disabled). The full
-// picture (source + saved URL) comes from fetchAlerts() -> GET /api/alerts.
+/* ---------- alerts (notification webhooks: list / add / remove / test) ------ */
+// Every alert goes to EVERY webhook listed here. Lightweight enabled/disabled
+// comes from the overview poll; the list itself comes from GET /api/alerts.
 function renderAlerts(enabled){
   if (enabled) return; // fetchAlerts() paints the detailed "enabled" line
   $('alerts-status').innerHTML =
-    '<span style="color:var(--muted)">no webhook yet — paste a Discord or Slack webhook URL below, save, and you\'ll get alerts on DOWN checks, unhealthy containers, and full disks</span>';
+    '<span style="color:var(--muted)">no webhooks yet — add a Discord, Slack, or Telegram URL below and you\'ll get alerts on DOWN checks, unhealthy containers, and full disks</span>';
 }
-// Fetch the current webhook config and paint the status + prefill the field.
+// Fetch the configured webhooks and paint the status line + the list.
 async function fetchAlerts(){
   try {
     const r = await fetch('/api/alerts');
     if (!r.ok) return;
     const a = await r.json();
-    if (a.source === 'env'){
-      $('alerts-status').innerHTML = badge('s-good', 'enabled') +
-        ' <span style="color:var(--ink-2)">using <code>ALERT_WEBHOOK_URL</code> from the environment. Saving a URL below overrides it.</span>';
-    } else if (a.source === 'ui'){
-      $('alerts-status').innerHTML = badge('s-good', 'enabled') +
-        ' <span style="color:var(--ink-2)">posts to your saved webhook on DOWN checks, unhealthy containers, and full disks</span>';
+    const hooks = a.webhooks || [];
+    if (hooks.length){
+      $('alerts-status').innerHTML = badge('s-good', hooks.length === 1 ? '1 webhook' : hooks.length + ' webhooks') +
+        ' <span style="color:var(--ink-2)">every alert is sent to all of them</span>';
     } else {
       renderAlerts(false);
     }
-    // Only the UI-saved URL is echoed back; an env secret stays hidden.
-    if (a.url) $('alerts-url').value = a.url;
+    $('alerts-list').innerHTML = hooks.map(hookRow).join('');
   } catch (e) { /* non-fatal */ }
+}
+// One row of the webhook list. Env-declared URLs arrive already masked by the
+// server and carry no × — they belong to whoever deployed the stack.
+function hookRow(h){
+  const tag = h.source === 'env'
+    ? '<span class="badge s-mut" title="from ALERT_WEBHOOK_URL"><span class="dot"></span>env</span>'
+    : '';
+  const remove = h.removable
+    ? `<button class="ghost" type="button" data-remove-hook="${esc(h.url)}"
+         title="Remove this webhook" style="padding:2px 8px">×</button>`
+    : '';
+  return `<div style="display:flex;gap:8px;align-items:center;justify-content:space-between;
+            background:var(--page);border:1px solid var(--border);border-radius:6px;padding:6px 8px">
+      <code style="font-size:12px;overflow-wrap:anywhere">${esc(h.url)}</code>
+      <span style="display:flex;gap:6px;align-items:center;flex:none">${tag}${remove}</span>
+    </div>`;
 }
 // A tiny transient message under the buttons.
 function alertsMsg(text, ok){
@@ -1256,22 +1270,41 @@ function alertsMsg(text, ok){
   el.textContent = text;
   el.style.color = ok === true ? 'var(--good)' : ok === false ? 'var(--crit)' : 'var(--ink-2)';
 }
-$('alerts-save').onclick = async () => {
+$('alerts-add').onclick = async () => {
   const url = $('alerts-url').value.trim();
-  alertsMsg('saving…');
+  if (!url){ alertsMsg('paste a webhook URL first', false); return; }
+  alertsMsg('adding…');
   try {
-    const r = await fetch('/api/alerts/save', {
+    const r = await fetch('/api/alerts', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({url})
     });
+    if (r.status === 401){ showLogin(); return; }
     const p = await r.json().catch(() => ({}));
-    if (r.ok){ alertsMsg(url ? '✓ saved' : '✓ cleared — falling back to env', true); fetchAlerts(); }
-    else alertsMsg('failed: ' + (p.error || r.status), false);
+    if (!r.ok){ alertsMsg('failed: ' + (p.error || r.status), false); return; }
+    $('alerts-url').value = '';
+    alertsMsg(p.added ? '✓ added' : 'already in the list', true);
+    fetchAlerts();
   } catch (e) { alertsMsg('failed: ' + e, false); }
 };
+// Remove a webhook when its × is clicked (event-delegated on the list).
+$('alerts-list').addEventListener('click', async e => {
+  const url = e.target.getAttribute && e.target.getAttribute('data-remove-hook');
+  if (!url) return;
+  if (!confirm('Stop sending alerts to this webhook?')) return;
+  try {
+    const r = await fetch('/api/alerts/remove', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({url})
+    });
+    if (r.status === 401){ showLogin(); return; }
+    alertsMsg('✓ removed', true);
+    fetchAlerts();
+  } catch (e) { alertsMsg('failed: ' + e, false); }
+});
 $('alerts-test').onclick = async () => {
-  // Test the value in the box if present (lets you verify BEFORE saving),
-  // otherwise the active webhook.
+  // With something typed in the box, test just that (verify BEFORE adding);
+  // otherwise test every configured webhook and report each one.
   const url = $('alerts-url').value.trim();
   alertsMsg('sending test…');
   try {
@@ -1280,7 +1313,14 @@ $('alerts-test').onclick = async () => {
       body: JSON.stringify(url ? {url} : {})
     });
     const p = await r.json().catch(() => ({}));
-    alertsMsg(r.ok ? '✓ sent — check your channel' : ('failed: ' + (p.error || r.status)), r.ok);
+    if (!r.ok){ alertsMsg('failed: ' + (p.error || r.status), false); return; }
+    const results = p.results || [];
+    const failed = results.filter(x => !x.ok);
+    if (!failed.length){
+      alertsMsg('✓ sent to ' + results.length + (results.length === 1 ? ' webhook' : ' webhooks') + ' — check your channels', true);
+    } else {
+      alertsMsg(failed.map(f => f.url + ': ' + f.error).join(' · '), false);
+    }
   } catch (e) { alertsMsg('failed: ' + e, false); }
 };
 
