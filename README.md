@@ -6,6 +6,8 @@ One small Go binary, no accounts, no cloud, no agents to install.
 Run it on the host you want to watch and it serves a live dashboard of the machine and everything running on it.
 It only reports on the box it runs on, so to watch several machines, run one instance on each.
 
+![The Perch dashboard: machine metrics, containers, health checks and notification webhooks on one page](docs/example-light.png)
+
 ## What you get
 
 - CPU, memory, swap, load, uptime, disk usage per mount.
