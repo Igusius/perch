@@ -253,6 +253,7 @@ func main() {
 	collectMachine() // prime the cpu-percent delta counters
 	loadChecks()
 	loadAlertState() // restore the UI-saved webhook URL (if any)
+	warnRedisConsoleConfig()
 	go collectLoop()
 	// Warm the API-usage cache in the background so the Usage tab has data on
 	// first view (no-op unless a provider admin key is set).
@@ -267,6 +268,7 @@ func main() {
 	mux.HandleFunc("POST /api/probe", requireAuth(handleProbe))
 	mux.HandleFunc("/api/logs", requireAuth(handleContainerLogs))
 	mux.HandleFunc("/api/inspect", requireAuth(handleInspect))
+	mux.HandleFunc("POST /api/console/redis", requireAuth(handleRedisConsole))
 	mux.HandleFunc("/api/trends", requireAuth(handleTrends))
 	mux.HandleFunc("GET /api/alerts", requireAuth(handleAlertsGet))
 	mux.HandleFunc("POST /api/alerts", requireAuth(handleAlertsAdd))

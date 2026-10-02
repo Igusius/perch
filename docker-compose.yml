@@ -47,6 +47,11 @@ services:
       # in /data below. To declare them up front instead, set CHECKS_YAML.
       # Checks that reach other containers BY NAME (http://my-api:8080) need
       # perch on the shared `proxy` network — see note 3 in the header.
+      # The Redis console reaches containers the same way: to use "redis:6379"
+      # as a target, perch must share a network with that redis.
+      # Set REDIS_TARGETS to the addresses the console may reach, e.g.
+      #   - REDIS_TARGETS=cache=redis:6379
+      # REDIS_PASSWORD is only ever sent to an address listed there.
       # writable volume for the banned-IPs file and saved checks (rootfs is
       # read-only)
       - ban-data:/data

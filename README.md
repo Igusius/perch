@@ -17,6 +17,7 @@ It only reports on the box it runs on, so to watch several machines, run one ins
 - Incoming HTTP requests, read from nginx proxy manager's access logs.
 - Health checks against your own URLs, with latency and uptime.
 - A "curl from the browser" for hitting services from inside the network.
+- A read-only Redis console: run `SCAN`, `INFO`, `CLIENT LIST` and friends against any Redis on the network, from the dashboard.
 - Alerts to a Discord, Slack, or Telegram webhook when a check fails, a container turns unhealthy, or a disk fills up.
 - OpenAI and Anthropic API spend, if you supply org admin keys.
 - Optional login with a shared key or GitHub OAuth.
@@ -67,6 +68,8 @@ A `.env` file in the working directory is loaded on startup; the real environmen
 | `PORT` | `3535` | listen port |
 | `CHECKS_YAML` | *(empty)* | health checks declared up front, instead of adding them in the UI |
 | `NPM_LOG_DIR` | `/npm-logs` | nginx proxy manager access logs |
+| `REDIS_TARGETS` | *(empty)* | Redis addresses the console may reach, comma-separated (`cache=redis:6379, redis-2:6379`); empty means any address, with no stored credentials |
+| `REDIS_USERNAME` / `REDIS_PASSWORD` | *(empty)* | credentials for the `REDIS_TARGETS` above; only ever sent to those addresses. Typed per query otherwise |
 | `ALERT_WEBHOOK_URL` | *(empty = alerts off)* | Discord, Slack, or Telegram webhook; also settable in the UI |
 | `ALERT_DISK_PCT` | `90` | percent-full at which a disk alerts |
 | `OPENAI_ADMIN_KEY` / `ANTHROPIC_ADMIN_KEY` | *(empty = tab off)* | org admin keys for the spend tab, read server-side only |
@@ -84,6 +87,19 @@ A [socket-proxy](https://github.com/Tecnativa/docker-socket-proxy) forwards read
 The container drops all capabilities and runs with a read-only root filesystem and read-only host mounts.
 
 Perch only reads. There is no start, stop, restart, or redeploy; every Docker call it makes is a `GET`.
+
+The Redis console does not use `docker exec`.
+Perch speaks the Redis protocol over the network, so the console needs no Docker privileges at all, and the command allowlist lives in the server.
+Commands that write, reconfigure, run scripts, or stop the server are refused before a connection is opened.
+Credential values in a `CONFIG GET` reply are redacted, matched on the shape of the parameter name so a renamed spelling does not slip through.
+
+`REDIS_USERNAME`/`REDIS_PASSWORD` are only ever sent to an address listed in `REDIS_TARGETS`.
+Without that list Perch never sends them at all, and you type the password per query instead.
+This is deliberate: the console target is free text, so a stored credential paired with an arbitrary address would let any logged-in user point Perch at a host they control and collect it.
+Setting `REDIS_TARGETS` also stops the console reaching anything else on your network.
+
+It can still read your data, which is the point of it: anyone who can log in to Perch can read any Redis Perch can reach.
+Give Perch a read-only Redis ACL user and let Redis enforce the limit too.
 
 The API-calls feature sends its requests from the Perch container, so a logged-in user can reach anything the container can reach on your internal network, including a cloud provider's metadata endpoint.
 
